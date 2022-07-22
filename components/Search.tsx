@@ -1,402 +1,241 @@
 import React from 'react';
-import NextLink from 'next/link';
-import { DocSearch } from '@docsearch/react';
-import { globalCss, keyframes } from '@modulz/design-system';
-import type { InternalDocSearchHit, StoredDocSearchHit } from '@docsearch/react/dist/esm/types';
-
-interface HitProps {
-  hit: InternalDocSearchHit | StoredDocSearchHit;
-  children: React.ReactNode;
-}
-
-function Hit({ hit, children }: HitProps) {
-  return (
-    <NextLink href={hit.url} passHref>
-      <a>{children}</a>
-    </NextLink>
-  );
-}
+import {
+  Tooltip,
+  IconButton,
+  Dialog,
+  DialogTrigger,
+  DialogContent,
+  TextField,
+  Box,
+} from '@modulz/design-system';
+import { MagnifyingGlassIcon } from '@radix-ui/react-icons';
+import algoliasearch from 'algoliasearch';
+import { createAutocomplete } from '@algolia/autocomplete-core';
+import type { SearchClient } from 'algoliasearch/lite';
+import { DocSearchHit, InternalDocSearchHit } from '@docsearch/react/dist/esm/types';
+import type { AutocompleteState } from '@algolia/autocomplete-core';
 
 function Search() {
   return (
-    <DocSearch
-      appId="36WT60VAD2"
-      indexName="radix-ui"
-      apiKey="4b0ea81fe7e54fc245b3cffa682046f8"
-      disableUserPersonalization
-      hitComponent={Hit}
-      placeholder="dialog, popover, …"
-    />
+    <Dialog>
+      <Tooltip content="Search">
+        <DialogTrigger asChild>
+          <IconButton css={{ mr: '-$2' }}>
+            <MagnifyingGlassIcon />
+          </IconButton>
+        </DialogTrigger>
+      </Tooltip>
+      <SearchDialogContent />
+    </Dialog>
   );
 }
 
-const fadeIn = keyframes({
-  from: { opacity: 0 },
-  to: { opacity: 1 },
-});
+const ALGOLIA_APP_ID = '36WT60VAD2';
+const ALGOLIA_API_KEY = '4b0ea81fe7e54fc245b3cffa682046f8';
+const ALGOLIA_INDEX_NAME = 'radix-ui';
+const SNIPPET_LENGTH = 10;
 
-const searchStyles = globalCss({
-  // hide these elements
-  '.DocSearch-LoadingIndicator, .DocSearch-Cancel, .DocSearch-Footer': { display: 'none' },
+const searchClient = algoliasearch(ALGOLIA_APP_ID, ALGOLIA_API_KEY);
 
-  '.DocSearch--active': {
-    overflow: 'hidden !important',
-  },
+function SearchDialogContent() {
+  const inputRef = React.useRef(null);
+  const [state, setState] = React.useState<AutocompleteState<InternalDocSearchHit>>({
+    query: '',
+    collections: [],
+    completion: null,
+    context: {},
+    isOpen: false,
+    activeItemId: null,
+    status: 'idle',
+  });
 
-  /**
-   * Button
-   */
-  '.DocSearch-Button': {
-    // Reset
-    alignItems: 'center',
-    appearance: 'none',
-    borderWidth: '0',
-    boxSizing: 'border-box',
-    display: 'inline-flex',
-    flexShrink: 0,
-    fontFamily: 'inherit',
-    fontSize: '14px',
-    justifyContent: 'center',
-    lineHeight: '1',
-    outline: 'none',
-    padding: '0',
-    textDecoration: 'none',
-    userSelect: 'none',
-    WebkitTapHighlightColor: 'transparent',
-    color: '$hiContrast',
-    backgroundColor: 'transparent',
-    borderRadius: '$1',
-    height: '$5',
-    width: '$5',
-    '&:hover': {
-      backgroundColor: '$slateA3',
-    },
-    '&:active': {
-      backgroundColor: '$slateA4',
-    },
-    '&:focus': {
-      boxShadow: 'inset 0 0 0 1px $colors$slateA8, 0 0 0 1px $colors$slateA8',
-    },
-    '&:disabled': {
-      pointerEvents: 'none',
-      backgroundColor: 'transparent',
-      color: '$slate6',
-    },
+  const autocomplete = React.useMemo(
+    () =>
+      createAutocomplete<
+        InternalDocSearchHit,
+        React.FormEvent<HTMLFormElement>,
+        React.MouseEvent,
+        React.KeyboardEvent
+      >({
+        id: 'docsearch',
+        defaultActiveItemId: 0,
+        placeholder: 'dialog, popover, …',
+        openOnFocus: true,
+        initialState: { query: '', context: { searchSuggestions: [] } },
+        onStateChange(props) {
+          setState(props.state);
+        },
+        getSources({ query, state: sourcesState, setContext, setStatus }) {
+          if (!query) return [];
 
-    mr: '-$2',
+          return searchClient
+            .search<DocSearchHit>([
+              {
+                query,
+                indexName: ALGOLIA_INDEX_NAME,
+                params: {
+                  attributesToRetrieve: [
+                    'hierarchy.lvl0',
+                    'hierarchy.lvl1',
+                    'hierarchy.lvl2',
+                    'hierarchy.lvl3',
+                    'hierarchy.lvl4',
+                    'hierarchy.lvl5',
+                    'hierarchy.lvl6',
+                    'content',
+                    'type',
+                    'url',
+                  ],
+                  attributesToSnippet: [
+                    `hierarchy.lvl1:${SNIPPET_LENGTH}`,
+                    `hierarchy.lvl2:${SNIPPET_LENGTH}`,
+                    `hierarchy.lvl3:${SNIPPET_LENGTH}`,
+                    `hierarchy.lvl4:${SNIPPET_LENGTH}`,
+                    `hierarchy.lvl5:${SNIPPET_LENGTH}`,
+                    `hierarchy.lvl6:${SNIPPET_LENGTH}`,
+                    `content:${SNIPPET_LENGTH}`,
+                  ],
+                  snippetEllipsisText: '…',
+                  highlightPreTag: '<mark>',
+                  highlightPostTag: '</mark>',
+                  hitsPerPage: 20,
+                },
+              },
+            ])
+            .catch((error) => {
+              // The Algolia `RetryError` happens when all the servers have
+              // failed, meaning that there's no chance the response comes
+              // back. This is the right time to display an error.
+              // See https://github.com/algolia/algoliasearch-client-javascript/blob/2ffddf59bc765cd1b664ee0346b28f00229d6e12/packages/transporter/src/errors/createRetryError.ts#L5
+              if (error.name === 'RetryError') {
+                setStatus('error');
+              }
 
-    svg: { width: 15, height: 15 },
-  },
+              throw error;
+            })
+            .then(({ results }) => {
+              const { hits, nbHits } = results[0];
+              const sources = groupBy(hits, (hit) => removeHighlightTags(hit));
 
-  '.DocSearch-Button-Placeholder, .DocSearch-Button-Keys': { display: 'none' },
+              // We store the `lvl0`s to display them as search suggestions
+              // in the "no results" screen.
+              if (
+                (sourcesState.context.searchSuggestions as any[]).length <
+                Object.keys(sources).length
+              ) {
+                setContext({
+                  searchSuggestions: Object.keys(sources),
+                });
+              }
 
-  /**
-   * Modal
-   */
-  '.DocSearch-Container': {
-    backgroundColor: 'rgba(0, 0, 0, .15)',
-    position: 'fixed',
-    left: 0,
-    top: 0,
-    height: '100vh',
-    width: '100vw',
-  },
+              setContext({ nbHits });
 
-  '.DocSearch-Modal': {
-    display: 'flex',
-    flexDirection: 'column',
-    backgroundColor: '$panel',
-    borderRadius: '$3',
-    boxShadow: '$colors$shadowLight 0px 10px 38px -10px, $colors$shadowDark 0px 10px 20px -15px',
-    position: 'relative',
-    margin: '$9 auto auto',
-    maxWidth: 500,
-    maxHeight: 'calc(100vh - $9 - $5)',
-    padding: '$4',
+              return Object.values<DocSearchHit[]>(sources).map((items, index) => {
+                return {
+                  sourceId: `hits${index}`,
+                  onSelect({ item, event }) {
+                    // if (!event.shiftKey && !event.ctrlKey && !event.metaKey) {
+                    //   onClose();
+                    // }
+                  },
+                  getItemUrl({ item }) {
+                    return item.url;
+                  },
+                  getItems() {
+                    return Object.values(groupBy(items, (item) => item.hierarchy.lvl1))
+                      .map((groupedHits) =>
+                        groupedHits.map((item) => {
+                          return {
+                            ...item,
+                            __docsearch_parent:
+                              item.type !== 'lvl1' &&
+                              groupedHits.find(
+                                (siblingItem) =>
+                                  siblingItem.type === 'lvl1' &&
+                                  siblingItem.hierarchy.lvl1 === item.hierarchy.lvl1
+                              ),
+                          };
+                        })
+                      )
+                      .flat();
+                  },
+                };
+              });
+            });
+        },
+      }),
+    []
+  );
 
-    a: { textDecoration: 'none' },
-  },
+  return (
+    <DialogContent
+      css={{
+        top: '$9',
+        mt: 0,
+        width: 500,
+        maxHeight: 'calc(100vh - $9 - $5)',
+        transform: 'translate(-50%, 0)',
 
-  /**
-   * Search
-   */
-  '.DocSearch-SearchBar': {
-    flexShrink: 0,
-    display: 'flex',
-    alignItems: 'center',
-  },
+        '@media (max-width:750px)': {
+          borderRadius: '0',
+          boxShadow: 'none',
+          top: 0,
+          left: 0,
+          transform: 'none',
+          height: '100%',
+          maxHeight: 'calc(var(--docsearch-vh, 1vh)*100)',
+          maxWidth: '100%',
+          width: '100%',
+          padding: '$3',
+        },
+      }}
+    >
+      <TextField
+        ref={inputRef}
+        size="2"
+        {...autocomplete.getInputProps({ inputElement: inputRef.current })}
+      />
+    </DialogContent>
+  );
+}
 
-  '.DocSearch-Form': {
-    display: 'flex',
-    alignItems: 'center',
-    borderRadius: '$2',
-    backgroundColor: '$loContrast',
-    boxShadow: 'inset 0 0 0 1px $colors$slate7',
-    margin: '0',
-    position: 'relative',
-    width: '100%',
-    pl: '$2',
-    pr: '$1',
+export function groupBy<TValue extends Record<string, unknown>>(
+  values: TValue[],
+  predicate: (value: TValue) => string
+): Record<string, TValue[]> {
+  return values.reduce<Record<string, TValue[]>>((acc, item) => {
+    const key = predicate(item);
 
-    '&:focus-within': {
-      boxShadow: 'inset 0px 0px 0px 1px $colors$blue8, 0px 0px 0px 1px $colors$blue8',
-      '&:-webkit-autofill': {
-        boxShadow:
-          'inset 0px 0px 0px 1px $colors$blue8, 0px 0px 0px 1px $colors$blue8, inset 0 0 0 100px $colors$blue3',
-      },
-    },
-  },
+    if (!acc.hasOwnProperty(key)) {
+      acc[key] = [];
+    }
 
-  '.DocSearch-MagnifierLabel': {
-    '& > svg': { width: '$3', height: '$3' },
-  },
+    // We limit each section to show 5 hits maximum.
+    // This acts as a frontend alternative to `distinct`.
+    if (acc[key].length < 5) {
+      acc[key].push(item);
+    }
 
-  '.DocSearch-Input': {
-    // Reset
-    appearance: 'none',
-    borderWidth: '0',
-    boxSizing: 'border-box',
-    fontFamily: 'inherit',
-    margin: '0',
-    outline: 'none',
-    padding: '0',
-    width: '100%',
-    WebkitTapHighlightColor: 'rgba(0,0,0,0)',
-    '&::before': {
-      boxSizing: 'border-box',
-    },
-    '&::after': {
-      boxSizing: 'border-box',
-    },
+    return acc;
+  }, {});
+}
 
-    // Custom
-    flex: 1,
-    backgroundColor: 'transparent',
-    color: '$hiContrast',
-    height: '$6',
-    px: '$2',
-    fontSize: '$3',
-    lineHeight: '$sizes$6',
+const regexHighlightTags = /(<mark>|<\/mark>)/g;
+const regexHasHighlightTags = RegExp(regexHighlightTags.source);
 
-    '&:-webkit-autofill::first-line': {
-      fontFamily: '$untitled',
-      color: '$hiContrast',
-      fontSize: '$3',
-    },
+export function removeHighlightTags(hit: DocSearchHit | InternalDocSearchHit): string {
+  const internalDocSearchHit = hit as InternalDocSearchHit;
 
-    '&:-webkit-autofill': {
-      boxShadow: 'inset 0 0 0 1px $colors$blue6, inset 0 0 0 100px $colors$blue3',
-    },
+  if (!internalDocSearchHit.__docsearch_parent && !hit._highlightResult) {
+    return hit.hierarchy.lvl0;
+  }
 
-    '&::placeholder': {
-      color: '$slate9',
-    },
+  const { value } =
+    (internalDocSearchHit.__docsearch_parent
+      ? internalDocSearchHit.__docsearch_parent?._highlightResult?.hierarchy?.lvl0
+      : hit._highlightResult?.hierarchy?.lvl0) || {};
 
-    '&::-webkit-search-cancel-button, &::-webkit-search-decoration, &::-webkit-search-results-button, &::-webkit-search-results-decoration': {
-      display: 'none',
-    },
-  },
+  return value && regexHasHighlightTags.test(value) ? value.replace(regexHighlightTags, '') : value;
+}
 
-  '.DocSearch-Reset': {
-    appearance: 'none',
-    display: 'inline-flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'transparent',
-    borderWidth: '0',
-    padding: 0,
-    '&:hover': {
-      backgroundColor: '$slateA3',
-    },
-    '&:focus': {
-      outline: 'none',
-      boxShadow: 'inset 0 0 0 1px $colors$slateA8, 0 0 0 1px $colors$slateA8',
-    },
-    '&:active': {
-      backgroundColor: '$slateA4',
-    },
-    height: '$5',
-    width: '$5',
-    borderRadius: '50%',
-
-    animation: `${fadeIn} .1s ease-in forwards`,
-    cursor: 'pointer',
-    right: '0',
-
-    '&[hidden]': { display: 'none' },
-    '& > svg': { width: '$3', height: '$3' },
-  },
-
-  /**
-   * Results
-   */
-  '.DocSearch-Dropdown': {
-    flex: 1,
-    overflow: 'auto',
-    mr: '-$3',
-    pr: '$3',
-
-    ul: {
-      display: 'flex',
-      flexDirection: 'column',
-      gap: '$1',
-      listStyle: 'none',
-      margin: 0,
-      padding: 0,
-    },
-
-    '&:not(:empty)': { mt: '$1' },
-  },
-
-  '.DocSearch-Hit-source': {
-    position: 'sticky',
-    top: 0,
-    zIndex: 10,
-
-    backgroundColor: '$panel',
-    color: '$slate11',
-    fontSize: '$1',
-    fontWeight: '500',
-    my: 0,
-    pt: '$3',
-    pb: '$1',
-  },
-
-  '.DocSearch-Hit': {
-    display: 'flex',
-    borderRadius: '$1',
-    position: 'relative',
-    fontSize: '$3',
-    backgroundColor: '$slate2',
-
-    a: {
-      width: '100%',
-      color: 'inherit',
-    },
-
-    mark: {
-      backgroundColor: 'transparent',
-      color: '$blue10',
-    },
-
-    '&[aria-selected=true]': {
-      backgroundColor: '$blue9',
-      color: 'white',
-
-      mark: { color: 'inherit', textDecoration: 'underline' },
-    },
-  },
-
-  '.DocSearch-Hit-Container': {
-    display: 'flex',
-    flexDirection: 'row',
-    alignItems: 'center',
-    height: '$7',
-    px: '$1',
-  },
-
-  '.DocSearch-Hit-icon, .DocSearch-Hit-action': {
-    display: 'inline-flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    height: '$5',
-    width: '$5',
-    color: '$slate9',
-    svg: { height: '$3', width: '$3' },
-
-    '[aria-selected=true] &': { color: 'white' },
-  },
-  '.DocSearch-Hit-action': {
-    marginLeft: 'auto',
-    '[aria-selected=false] &': { display: 'none' },
-  },
-
-  '.DocSearch-Hit-Tree': {
-    height: '$7',
-    color: '$slate9',
-    width: '$5',
-
-    '[aria-selected=true] &': { color: 'white' },
-  },
-
-  '.DocSearch-Hit-content-wrapper': {
-    // flex: '1 1 auto',
-    display: 'flex',
-    flexDirection: 'column',
-    justifyContent: 'center',
-
-    position: 'relative',
-
-    overflowX: 'hidden',
-    whiteSpace: 'nowrap',
-    textOverflow: 'ellipsis',
-  },
-
-  '.DocSearch-Hit-path': {
-    color: '$slate11',
-    fontSize: '$1',
-    fontWeight: 500,
-
-    '[aria-selected=true] &': { color: 'white' },
-  },
-
-  /**
-   * No results
-   */
-  '.DocSearch-NoResults': {
-    fontSize: '$3',
-    '.DocSearch-Screen-Icon, .DocSearch-NoResults-Prefill-List': { display: 'none' },
-
-    '.DocSearch-Title': {
-      my: 0,
-      mt: '$1',
-      strong: { fontWeight: 500 },
-    },
-  },
-
-  /**
-   * Mobile
-   */
-  '@media (max-width:750px)': {
-    '.DocSearch-Container': { position: 'absolute' },
-
-    '.DocSearch-Modal': {
-      borderRadius: '0',
-      boxShadow: 'none',
-      height: '100%',
-      maxHeight: 'calc(var(--docsearch-vh, 1vh)*100)',
-      margin: '0',
-      maxWidth: '100%',
-      width: '100%',
-      padding: '$3',
-    },
-
-    '.DocSearch-Input': {
-      fontSize: '$4',
-    },
-
-    '.DocSearch-Dropdown': {
-      height: '100%',
-      maxHeight: 'calc(var(--docsearch-vh, 1vh)*100 - $3 - $6 - $1 - $3)',
-    },
-
-    '.DocSearch-Cancel': {
-      all: 'unset',
-      WebkitTapHighlightColor: 'rgba(0,0,0,0)',
-      display: 'inline-flex',
-      flexShrink: 0,
-      alignItems: 'center',
-      justifyContent: 'center',
-      height: '$5',
-      px: '$2',
-      fontFamily: '$untitled',
-      fontSize: '$3',
-      fontWeight: 500,
-      ml: '$2',
-    },
-
-    '.DocSearch-Hit-Tree': { display: 'none' },
-  },
-});
-
-export { Search, searchStyles };
+export { Search };
